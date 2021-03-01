@@ -11,14 +11,14 @@ def coreff(x, y):
 def rmse(preds, y):
     return np.sqrt(sum((preds - y)**2)/preds.shape[0])
 
-def eval_score(preds, label):
+def eval_score(preds, label, out_len):
     # preds = preds.cpu().detach().numpy().squeeze()
     # label = label.cpu().detach().numpy().squeeze()
     acskill = 0
     RMSE = 0
     a = 0
     a = [1.5]*4 + [2]*7 + [3]*7 + [4]*6
-    for i in range(24):
+    for i in range(out_len):
         RMSE += rmse(label[:, i], preds[:, i])
         cor = coreff(label[:, i], preds[:, i])
 

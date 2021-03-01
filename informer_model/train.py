@@ -26,34 +26,48 @@ print("=" * 10 + " 1. Loading data " + "=" * 10)
 SODA_train = ncDataset('enso_round1_train_20210201/CMIP_train.nc')
 SODA_label = ncDataset('enso_round1_train_20210201/CMIP_label.nc')
 
-total_label = SODA_label.variables['nino'][:].data[:, 12:36]
+
 total_sst = SODA_train.variables['sst'][:].data[:, :12]
 total_t300 = SODA_train.variables['t300'][:].data[:, :12]
 total_ua = SODA_train.variables['ua'][:].data[:, :12]
 total_va = SODA_train.variables['va'][:].data[:, :12]
+
+total_label = SODA_label.variables['nino'][:].data[:, 12:36]
+sst_label = SODA_train.variables['sst'][:].data[:, 12:36]
+t300_label = SODA_train.variables['t300'][:].data[:, 12:36]
+ua_label = SODA_train.variables['ua'][:].data[:, 12:36]
+va_label = SODA_train.variables['va'][:].data[:, 12:36]
 
 total_ua = np.expand_dims(np.nan_to_num(total_ua), 2)
 total_va = np.expand_dims(np.nan_to_num(total_va), 2)
 total_t300 = np.expand_dims(np.nan_to_num(total_t300), 2)
 total_sst = np.expand_dims(np.nan_to_num(total_sst), 2)
 
-total_data = np.concatenate([total_sst, total_t300, total_ua, total_va], axis=2)
+ua_label = np.expand_dims(np.nan_to_num(ua_label), 2)
+va_label = np.expand_dims(np.nan_to_num(va_label), 2)
+t300_label = np.expand_dims(np.nan_to_num(t300_label), 2)
+sst_label = np.expand_dims(np.nan_to_num(sst_label), 2)
 
-train_data, valid_data, train_label, valid_label = train_test_split(
-    total_data, total_label, test_size=0.2, random_state=427)
+total_data = np.concatenate([total_sst, total_t300, total_ua, total_va], axis=2)
+data_label = np.concatenate([sst_label, t300_label, ua_label, va_label], axis=2)
+
+train_data, valid_data, train_label, valid_label, train_data_label, valid_data_label = train_test_split(
+    total_data, total_label, data_label, test_size=0.2, random_state=427)
 print("train_data: ", train_data.shape)
 print("valid_data: ", valid_data.shape)
 print("train_label: ", train_label.shape)
 print("valid_label: ", valid_label.shape)
+print("train_data_label: ", train_data_label.shape)
+print("valid_data_label: ", valid_data_label.shape)
 
-train_dataset = EarthDataSet(train_data, train_label)
-valid_dataset = EarthDataSet(valid_data, valid_label)
+train_dataset = EarthDataSet(train_data, train_label, train_data_label)
+valid_dataset = EarthDataSet(valid_data, valid_label, valid_data_label)
 train_loader = DataLoader(train_dataset, batch_size=16, shuffle=True)
 valid_loader = DataLoader(valid_dataset, batch_size=16, shuffle=True)
 
 print("=" * 10 + " 2. Loading model " + "=" * 10)
 c_out=24*72
-model = MainInformer(c_out=c_out, seq_len=12, label_len=1, out_len=24, mid_dim=128)
+model = MainInformer(c_out=c_out, seq_len=12, label_len=1, out_len=6, mid_dim=128)
 # print(model)
 print('| num. module params: {} (num. trained: {})'.format(
     sum(p.numel() for p in model.parameters()),
@@ -81,7 +95,7 @@ for i in range(nums_epoch):
         preds = model(data)
         loss = criterion(preds, label)
         if step % 100 == 0:
-            print("Epoch: {}, step: {}, train loss:{:.5f}".format(i, step, loss.item()))
+            print("Epoch: {}, step: {}, train loss: {:.5f}".format(i, step, loss.item()))
         loss.backward()
         optim.step()
     model.eval()
@@ -102,6 +116,6 @@ for i in range(nums_epoch):
     y_pred = np.concatenate(y_pred, axis=0)
 
     print('========= Epoch: {}, valid losses: {:.5f}'.format(i, np.mean(losses)))
-    sco = eval_score(y_true, y_pred)
+    sco = eval_score(y_true, y_pred, out_len=6)
     print('========= Epoch: {}, Valid Score {}'.format(i,sco))
     print("\n")

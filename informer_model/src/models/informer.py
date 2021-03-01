@@ -1,8 +1,6 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
-from src.utils.masking import TriangularCausalMask, ProbMask
 from src.modules.encoder import Encoder, EncoderLayer, ConvLayer, EncoderStack
 from src.modules.decoder import Decoder, DecoderLayer
 from src.modules.attn import FullAttention, ProbAttention, AttentionLayer
