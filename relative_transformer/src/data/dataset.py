@@ -6,6 +6,7 @@ class EarthDataSet(Dataset):
         self.data = data
         self.label = label
         self.data_label = data_label
+        pass
 
     def __len__(self):
         return len(self.data)

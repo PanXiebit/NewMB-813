@@ -13,9 +13,28 @@ class MainModel(nn.Module):
         self.opts = opts
         self.hidden_size = opts.hidden_size
         self.cnnbackbone = CnnBacknone()
+        self.cnn_dropout = nn.Dropout(opts.cnn_dropout)
         self.encoder = TransformerEncoder(opts)
         self.decoder = TransformerDecoder(opts)
+        self.conv1 = nn.Conv1d(self.hidden_size, self.hidden_size, kernel_size=5, stride=1,
+                              padding=0)
+        self.norm1 = nn.BatchNorm1d(self.hidden_size)
+        self.conv2 = nn.Conv1d(self.hidden_size, self.hidden_size, kernel_size=5, stride=1,
+                              padding=0)
+        self.norm2 = nn.BatchNorm1d(self.hidden_size)
         self.pred_head = nn.Linear(self.hidden_size, 1)
+
+    def init(self):
+        for m in self.modules():
+            if isinstance(m, (nn.Conv2d, nn.Conv1d)):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+            elif isinstance(m, (nn.BatchNorm2d, nn.BatchNorm1d, nn.GroupNorm)):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+            elif isinstance(m, (nn.Linear, nn.Embedding)):
+                m.weight.data.normal_(mean=0.0, std=0.02)
+            if isinstance(m, nn.Linear) and m.bias is not None:
+                m.bias.data.zero_()
 
     def forward(self, x, y):
         """
@@ -24,17 +43,20 @@ class MainModel(nn.Module):
         :param y: [bs, 24, 4, 24, 72]
         :return:
         """
-        x = self.cnnbackbone(x)
+        enc_x = self.cnnbackbone(x)
+        enc_x = self.cnn_dropout(enc_x)
 
-        bs, T, h = x.shape
+        bs, T, h = enc_x.shape
         x_len = (torch.ones((bs)) * T).long().to(x.device)
         x_mask = self._get_mask(x_len)
-        enc_out = self.encoder(x, x_len, x_mask)
+        enc_out = self.encoder(enc_x, x_len, x_mask)
 
         # TODO, dec_inp?
-        y = self.cnnbackbone(y)  # [bs, y_len, 512]
         y_inp = torch.zeros((bs, y.size(1), h)).to(y.device) # [bs, y_len, 512]
-        y_len = (torch.ones((bs)) * y.size(1)).long().to(y.device)
+        # TODO.
+        y_inp = torch.cat([enc_x, y_inp], dim=1)  # [bs, x_len + y_len, 512]
+
+        y_len = (torch.ones((bs)) * y_inp.size(1)).long().to(y.device)
         y_mask = self._get_mask(y_len)
         dec_out = self.decoder(
             trg_embed=y_inp,
@@ -42,21 +64,32 @@ class MainModel(nn.Module):
             src_mask=x_mask,
             trg_mask=y_mask)
 
+        # convolution
+        dec_out = dec_out.transpose(1, 2)
+        dec_out = self.conv1(dec_out)
+        dec_out = self.norm1(dec_out)
+        dec_out = self.conv2(dec_out)
+        dec_out = self.norm2(dec_out)
+        dec_out = dec_out.transpose(1, 2)
+
+        dec_out = dec_out[:, -y.size(1):, :]
+
         prediction = self.pred_head(dec_out).squeeze(-1)
-        # print("enc_out: ", enc_out.shape)
-        # print("dec_out: ", dec_out.shape)
-        # exit()
+        y = self.cnnbackbone(y)  # [bs, y_len, 512]
         return dec_out, prediction, y
 
     def decoder_one_pass(self, x):
-        x = self.cnnbackbone(x)
+        enc_x = self.cnnbackbone(x)
+        enc_x = self.cnn_dropout(enc_x)
 
-        bs, T, h = x.shape
+        bs, T, h = enc_x.shape
         x_len = (torch.ones((bs)) * T).long().to(x.device)
         x_mask = self._get_mask(x_len)
-        enc_out = self.encoder(x, x_len, x_mask)
+        enc_out = self.encoder(enc_x, x_len, x_mask)
 
         dec_inp = torch.zeros((bs, 24, h)).to(x.device)
+        # TODO
+        dec_inp = torch.cat([enc_x, dec_inp], dim=1)
         y_len = (torch.ones((bs)) * dec_inp.size(1)).long().to(x.device)
         y_mask = self._get_mask(y_len)
         dec_out = self.decoder(
@@ -64,8 +97,58 @@ class MainModel(nn.Module):
             encoder_output=enc_out,
             src_mask=x_mask,
             trg_mask=y_mask)
+        # convolution
+        dec_out = dec_out.transpose(1, 2)
+        dec_out = self.conv1(dec_out)
+        dec_out = self.norm1(dec_out)
+        dec_out = self.conv2(dec_out)
+        dec_out = self.norm2(dec_out)
+        dec_out = dec_out.transpose(1, 2)
+
+        dec_out = dec_out[:, -24:, :]
         # print("dec_out: ", dec_out.shape)
         preds = self.pred_head(dec_out)
+        # print("preds: ", preds.shape)
+        return preds.squeeze(-1)
+
+    def decoder_autogressive(self, x):
+        enc_x = self.cnnbackbone(x)
+        enc_x = self.cnn_dropout(enc_x)
+
+        bs, T, h = enc_x.shape
+        x_len = (torch.ones((bs)) * T).long().to(x.device)
+        x_mask = self._get_mask(x_len)
+        enc_out = self.encoder(enc_x, x_len, x_mask)
+
+        x_pad = torch.zeros((bs, 12, h)).to(x.device)
+        x_prev = enc_x
+        dec_outs = []
+        # TODO
+        for i in range(2):
+            dec_inp = torch.cat([x_prev, x_pad], dim=1)      # [bs, 24, h]
+            y_len = (torch.ones((bs)) * dec_inp.size(1)).long().to(x.device)
+            y_mask = self._get_mask(y_len)
+            dec_out = self.decoder(
+                trg_embed=dec_inp,
+                encoder_output=enc_out,
+                src_mask=x_mask,
+                trg_mask=y_mask)
+            # # convolution
+            # print("dec_out: ", i, dec_out.shape)
+            # dec_out = dec_out.transpose(1, 2)
+            # dec_out = self.conv1(dec_out)
+            # dec_out = self.norm1(dec_out)
+            # dec_out = self.conv2(dec_out)
+            # dec_out = self.norm2(dec_out)
+            # dec_out = dec_out.transpose(1, 2)  # [bs, 10, h]
+            # print("dec_out: ", i, dec_out.shape)
+
+            dec_outs.append(dec_out[:, -12:, :])
+            x_prev = dec_out[:, -12:, :]
+
+        dec_outs = torch.cat(dec_outs, dim=1)  # [bs, 24, h]
+        # print("dec_out: ", dec_out.shape)
+        preds = self.pred_head(dec_outs)
         # print("preds: ", preds.shape)
         return preds.squeeze(-1)
 

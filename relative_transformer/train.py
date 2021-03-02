@@ -52,7 +52,7 @@ total_data = np.concatenate([total_sst, total_t300, total_ua, total_va], axis=2)
 data_label = np.concatenate([sst_label, t300_label, ua_label, va_label], axis=2)
 
 train_data, valid_data, train_label, valid_label, train_data_label, valid_data_label = train_test_split(
-    total_data, total_label, data_label, test_size=0.2, random_state=427)
+    total_data, total_label, data_label, test_size=0.1, random_state=427)
 print("train_data: ", train_data.shape)
 print("valid_data: ", valid_data.shape)
 print("train_label: ", train_label.shape)
@@ -62,17 +62,18 @@ print("valid_data_label: ", valid_data_label.shape)
 
 train_dataset = EarthDataSet(train_data, train_label, train_data_label)
 valid_dataset = EarthDataSet(valid_data, valid_label, valid_data_label)
-train_loader = DataLoader(train_dataset, batch_size=16, shuffle=True)
-valid_loader = DataLoader(valid_dataset, batch_size=16, shuffle=True)
+train_loader = DataLoader(train_dataset, batch_size=8, shuffle=True)
+valid_loader = DataLoader(valid_dataset, batch_size=8, shuffle=True)
 
 print("=" * 10 + " 2. Loading model " + "=" * 10)
 class Config():
     hidden_size = 512
     ff_size = 512
-    num_heads = 4
+    num_heads = 8
     dropout = 0.3
     emb_dropout = 0.3
-    num_layers = 2
+    cnn_dropout = 0.3
+    num_layers = 3
     local_num_layers = 0
     use_relative = True
     max_relative_positions = 24
@@ -90,16 +91,25 @@ device = 'cuda' if torch.cuda.is_available() else 'cpu'
 # device = 'cpu'
 model = model.to(device)
 optim = torch.optim.Adam(model.parameters(), lr=1e-4)
-# criterion = nn.L1Loss()
 criterion = nn.MSELoss()
 criterion_kl = nn.KLDivLoss()
 
 model.to(device)
 criterion.to(device)
 criterion_kl.to(device)
-nums_epoch = 150
+nums_epoch = 10
 
+def adjust_learning_rate(epoch, cur_loss, best_loss):
+    """Sets the learning rate to the initial LR decayed by 10 every 10 epochs"""
+    if epoch > 5 and cur_loss > best_loss:
+        print("Update learning rate!")
+        for param_group in optim.param_groups:
+            param_group['lr'] = param_group['lr'] * 0.8
+            print("lr: {:.6f}".format(param_group["lr"]))
+
+cur_loss = best_loss = 100
 for i in range(nums_epoch):
+    adjust_learning_rate(i, cur_loss, best_loss)
     model.train()
     for step, batch in enumerate(train_loader):
         data = batch["data"].to(device).float()
@@ -108,7 +118,6 @@ for i in range(nums_epoch):
         # print("data: ", data.shape)
         # print("label: ", label.shape)
         # print("data_y: ", data_y.shape)
-
         optim.zero_grad()
         dec_out, prediction, y_true = model(data, data_y)
         mse_loss = criterion(prediction, label)
@@ -141,3 +150,8 @@ for i in range(nums_epoch):
     sco = eval_score(y_true, y_pred, out_len=24)
     print('========= Epoch: {}, Valid Score {}'.format(i,sco))
     print("\n")
+
+    # update cur_loss and best_loss
+    cur_loss = np.mean(losses)
+    if cur_loss < best_loss:
+        best_loss = cur_loss

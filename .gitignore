@@ -1,3 +1,7 @@
 __pycache__
 enso_round1_train_20210201/
+<<<<<<< Updated upstream
 relative_transformer_commit/weight/
+=======
+*/checkpoints
+>>>>>>> Stashed changes
